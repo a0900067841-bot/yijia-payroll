@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#111827" />
   <title>月薪班表・自動打卡・薪資計算</title>
-  <style>
+  <link id="dynamic-favicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect x='2' y='2' width='176' height='176' rx='34' fill='black'/%3E%3Ctext x='90' y='106' text-anchor='middle' font-size='56' font-family='Arial,sans-serif' fill='white'%3E12:00%3C/text%3E%3C/svg%3E" />
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect x='2' y='2' width='176' height='176' rx='34' fill='black'/%3E%3Ctext x='90' y='106' text-anchor='middle' font-size='56' font-family='Arial,sans-serif' fill='white'%3E12:00%3C/text%3E%3C/svg%3E" />
+
+<style>
     :root{
       --bg:#f7f7f8;--card:#fff;--text:#111827;--muted:#6b7280;--border:#e5e7eb;
       --accent:#111827;--accentText:#fff;--danger:#b91c1c;--ok:#047857
@@ -38,6 +41,12 @@
     .salary-line.total{border-top:1px solid var(--border);padding-top:12px;font-size:18px;font-weight:700}
     .notice{font-size:13px;color:var(--muted);line-height:1.6}
     .notice strong{color:var(--text)}
+    .month-table-wrap{overflow-x:auto;margin-top:14px}
+    .month-table{width:100%;border-collapse:collapse;min-width:520px}
+    .month-table th,.month-table td{padding:9px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle}
+    .month-table th{font-size:12px;color:var(--muted);font-weight:700}
+    .month-table td{font-size:14px}
+    .month-table input[type="time"]{margin:0;padding:9px;font-size:16px}
     #toast{position:sticky;bottom:12px;background:#111827;color:#fff;padding:10px 14px;border-radius:12px;margin-top:12px;display:none}
     @media(max-width:800px){.summary,.form-grid{grid-template-columns:repeat(2,1fr)}}
     @media(max-width:520px){main{padding:12px}.summary,.form-grid,.mini-grid{grid-template-columns:1fr}.metric .value{font-size:23px}}
@@ -86,12 +95,43 @@
 
   <section class="card" style="margin-top:12px">
     <div class="row">
-      <div><h2 class="section-title">本月班表</h2><p class="help">先輸入每月上班日期與時間。</p></div>
-      <button id="addShift" class="primary">＋ 新增班表</button>
+      <div>
+        <h2 class="section-title">整月班表</h2>
+        <p class="help">直接填每天的上班／下班時間；休假日留空即可。</p>
+      </div>
+      <button id="openMonthSchedule" class="primary">輸入整月班表</button>
     </div>
   </section>
 
-  <section id="editor" class="card hidden" style="margin-top:12px">
+  <section id="monthSchedule" class="card hidden" style="margin-top:12px">
+    <div class="row">
+      <div>
+        <h2 class="section-title">整月快速輸入</h2>
+        <p class="help">只需要填上班時間和下班時間。沒有上班的日期請留空。</p>
+      </div>
+      <button id="closeMonthSchedule">關閉</button>
+    </div>
+    <div class="month-table-wrap">
+      <table class="month-table">
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th>星期</th>
+            <th>上班時間</th>
+            <th>下班時間</th>
+          </tr>
+        </thead>
+        <tbody id="monthScheduleBody"></tbody>
+      </table>
+    </div>
+    <div class="actions" style="margin-top:14px">
+      <button id="saveMonthSchedule" class="primary">儲存整月班表</button>
+      <button id="clearMonthSchedule">清空整月</button>
+    </div>
+    <p id="monthScheduleMsg" class="help" style="margin-top:8px"></p>
+  </section>
+
+  <section id="editor" class="card hidden" style="display:none!important">
     <h2 id="editorTitle" class="section-title">新增班表</h2>
     <div class="form-grid">
       <label>上班日期<input id="shiftDate" type="date"></label>
@@ -184,10 +224,68 @@
    $('shiftDate').value=s?s.date:$('month').value+'-01';$('startTime').value=s?s.start:'15:00';$('endTime').value=s?s.end:'23:00';$('breakMinutes').value=s?s.breakMinutes||0:0;
    $('clockInDate').value=s?s.clockInDate||'':'';$('clockInTime').value=s?s.clockInTime||'':'';$('clockOutDate').value=s?s.clockOutDate||'':'';$('clockOutTime').value=s?s.clockOutTime||'':'';$('note').value=s?s.note||'':''
  }
+
+ function daysInMonth(month){
+   const [y,m]=month.split('-').map(Number);
+   return new Date(y,m,0).getDate();
+ }
+ function weekdayName(date){
+   const [y,m,d]=date.split('-').map(Number);
+   return ['日','一','二','三','四','五','六'][new Date(y,m-1,d).getDay()];
+ }
+ function buildMonthSchedule(){
+   const month=$('month').value;
+   const body=$('monthScheduleBody');
+   body.innerHTML='';
+   const existing=new Map(md().shifts.map(s=>[s.date,s]));
+   for(let day=1;day<=daysInMonth(month);day++){
+     const date=`${month}-${pad(day)}`;
+     const s=existing.get(date);
+     const tr=document.createElement('tr');
+     tr.dataset.date=date;
+     tr.innerHTML=`
+       <td><strong>${day}</strong></td>
+       <td>週${weekdayName(date)}</td>
+       <td><input class="ms-start" type="time" value="${s?.start||''}" aria-label="${date} 上班時間"></td>
+       <td><input class="ms-end" type="time" value="${s?.end||''}" aria-label="${date} 下班時間"></td>`;
+     body.appendChild(tr);
+   }
+   $('monthScheduleMsg').textContent='休假日留空即可。跨日班例如 23:00 → 07:00 也可以直接輸入。';
+ }
+ function saveWholeMonth(){
+   const month=$('month').value;
+   const current=md().shifts;
+   const oldMap=new Map(current.map(s=>[s.date,s]));
+   const next=[];
+   [...$('monthScheduleBody').querySelectorAll('tr')].forEach(tr=>{
+     const date=tr.dataset.date;
+     const start=tr.querySelector('.ms-start').value;
+     const end=tr.querySelector('.ms-end').value;
+     if(!start && !end) return;
+     if(!start || !end) return;
+     const old=oldMap.get(date);
+     if(old){
+       next.push({...old,start,end});
+     }else{
+       next.push({
+         id:(crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random())),
+         date,start,end,breakMinutes:0,
+         clockInDate:'',clockInTime:'',clockOutDate:'',clockOutTime:'',
+         note:'',autoIn:false,autoOut:false
+       });
+     }
+   });
+   md().shifts=next;
+   persist();
+   render();
+   $('monthScheduleMsg').textContent=`已儲存 ${next.length} 天班表。`;
+   toast('整月班表已儲存');
+ }
+
  ensure(currentMonth);loadPay();render();
  qsa('.pay-input').forEach(i=>i.addEventListener('input',()=>{md().pay[i.dataset.pay]=n(i.value);persist();calc()}));
- $('month').addEventListener('change',()=>{ensure($('month').value);loadPay();render()});
- $('addShift').addEventListener('click',()=>openEditor(null));$('cancelShift').addEventListener('click',()=>$('editor').classList.add('hidden'));
+ $('month').addEventListener('change',()=>{ensure($('month').value);loadPay();render();if(!$('monthSchedule').classList.contains('hidden'))buildMonthSchedule()});
+ if($('addShift'))$('addShift').addEventListener('click',()=>openEditor(null));if($('cancelShift'))$('cancelShift').addEventListener('click',()=>$('editor').classList.add('hidden'));
  $('saveShift').addEventListener('click',()=>{
    const d={date:$('shiftDate').value,start:$('startTime').value,end:$('endTime').value,breakMinutes:Math.min(720,n($('breakMinutes').value)),clockInDate:$('clockInDate').value,clockInTime:$('clockInTime').value,clockOutDate:$('clockOutDate').value,clockOutTime:$('clockOutTime').value,note:$('note').value.trim(),autoIn:false,autoOut:false};
    if(!d.date||!d.start||!d.end){$('editorMsg').textContent='請完整填寫日期、上班時間與下班時間。';return}
@@ -210,6 +308,18 @@
    if(!state.months[prev]){toast('上個月沒有設定可複製');return}
    md().pay={...state.months[prev].pay};loadPay();persist();calc();toast('已複製上月薪資設定')
  });
+
+ $('openMonthSchedule').addEventListener('click',()=>{
+   buildMonthSchedule();
+   $('monthSchedule').classList.remove('hidden');
+ });
+ $('closeMonthSchedule').addEventListener('click',()=>$('monthSchedule').classList.add('hidden'));
+ $('saveMonthSchedule').addEventListener('click',saveWholeMonth);
+ $('clearMonthSchedule').addEventListener('click',()=>{
+   [...$('monthScheduleBody').querySelectorAll('input[type="time"]')].forEach(i=>i.value='');
+   $('monthScheduleMsg').textContent='已清空畫面，按「儲存整月班表」後才會正式儲存。';
+ });
+
  $('exportData').addEventListener('click',()=>{
    const blob=new Blob([JSON.stringify({version:1,exportedAt:new Date().toISOString(),months:state.months},null,2)],{type:'application/json'});
    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`薪資班表備份-${$('month').value}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)
@@ -220,6 +330,53 @@
  });
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)render()});
  setInterval(()=>{if(!document.hidden)render()},60000);
+})();
+</script>
+
+<script>
+(function(){
+  function pad(n){ return String(n).padStart(2,'0'); }
+  function buildClockIcon(text){
+    const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#111111"/>
+      <stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+  <rect x="2" y="2" width="176" height="176" rx="34" fill="url(#g)"/>
+  <rect x="4" y="4" width="172" height="172" rx="32" fill="none" stroke="#2b2b2b" stroke-width="2"/>
+  <path d="M16 22 C42 8, 138 8, 164 22 C138 28,42 28,16 22 Z" fill="rgba(255,255,255,0.10)"/>
+  <text x="90" y="108" text-anchor="middle" font-size="56" font-family="Arial, Helvetica, sans-serif" font-weight="500" fill="#f2f2f2" filter="url(#shadow)">${text}</text>
+</svg>`;
+    return "data:image/svg+xml," + encodeURIComponent(svg);
+  }
+  function setFavicon(text){
+    const href = buildClockIcon(text);
+    let icon = document.getElementById('dynamic-favicon');
+    if(!icon){
+      icon = document.createElement('link');
+      icon.id = 'dynamic-favicon';
+      icon.rel = 'icon';
+      icon.type = 'image/svg+xml';
+      document.head.appendChild(icon);
+    }
+    icon.href = href;
+  }
+  function updateClockFavicon(){
+    const now = new Date();
+    const text = pad(now.getHours()) + ":" + pad(now.getMinutes());
+    setFavicon(text);
+  }
+  updateClockFavicon();
+  setInterval(updateClockFavicon, 15000);
+  document.addEventListener('visibilitychange', function(){
+    if(!document.hidden) updateClockFavicon();
+  });
 })();
 </script>
 </body>
