@@ -75,6 +75,19 @@
   </section>
 
   <section class="card" style="margin-top:12px">
+    <div class="row">
+      <div>
+        <h2 class="section-title">雲端同步</h2>
+        <p id="cloudStatus" class="help">正在連線 Supabase…</p>
+      </div>
+      <div class="actions">
+        <button id="syncNow">立即同步</button>
+        <button id="reloadCloud">重新讀取雲端</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px">
     <h2 class="section-title">薪資設定</h2>
     <p class="help">全部都可以修改，每個月份互不影響。</p>
     <div class="form-grid">
@@ -280,11 +293,231 @@
    render();
    $('monthScheduleMsg').textContent=`已儲存 ${next.length} 天班表。`;
    toast('整月班表已儲存');
+   saveShiftsToCloud()
+     .then(async()=>{ const sb=await waitForSupabase(); await sb.rpc('payroll_auto_clock'); await loadShiftsFromCloud(); await loadClockRecordsFromCloud(); persist(); render(); setCloudStatus('班表已同步到 Supabase',true); })
+     .catch(err=>setCloudStatus('班表同步失敗：'+err.message));
+ }
+
+
+ const employeeKey='default';
+
+ async function waitForSupabase(){
+   if(window.__payrollSupabase) return window.__payrollSupabase;
+   return new Promise((resolve,reject)=>{
+     const timer=setTimeout(()=>reject(new Error('Supabase 載入逾時')),10000);
+     window.addEventListener('payroll-supabase-ready',()=>{
+       clearTimeout(timer); resolve(window.__payrollSupabase);
+     },{once:true});
+   });
+ }
+
+ function setCloudStatus(text, ok=false){
+   const el=$('cloudStatus');
+   if(!el)return;
+   el.textContent=text;
+   el.style.color=ok?'var(--ok)':'var(--muted)';
+ }
+
+ function monthFirstDay(month){ return month+'-01'; }
+
+ async function saveMonthSettingsToCloud(){
+   const sb=await waitForSupabase();
+   const p=md().pay;
+   const row={
+     employee_key:employeeKey,
+     payroll_month:monthFirstDay($('month').value),
+     base_salary:p.base||0,
+     attendance_bonus:p.attendance||0,
+     job_allowance:p.jobAllowance||0,
+     other_allowance:p.otherAllowance||0,
+     bonus:p.bonus||0,
+     overtime_pay:p.overtime||0,
+     extra_pay:p.extraPay||0,
+     leave_deduction:p.leaveDeduction||0,
+     late_deduction:p.lateDeduction||0,
+     labor_insurance:p.labor||0,
+     health_insurance:p.health||0,
+     other_deduction:p.otherDeduction||0
+   };
+   const {error}=await sb.from('payroll_month_settings')
+     .upsert(row,{onConflict:'employee_key,payroll_month'});
+   if(error) throw error;
+ }
+
+ async function saveShiftsToCloud(){
+   const sb=await waitForSupabase();
+   const month=$('month').value;
+   const start=month+'-01';
+   const [yy,mm]=month.split('-').map(Number);
+   const nd=new Date(yy,mm,1);
+   const end=`${nd.getFullYear()}-${pad(nd.getMonth()+1)}-01`;
+
+   // Delete this month's old cloud schedule then insert current month schedule.
+   const {error:delErr}=await sb.from('payroll_shifts')
+     .delete()
+     .eq('employee_key',employeeKey)
+     .gte('shift_date',start)
+     .lt('shift_date',end);
+   if(delErr) throw delErr;
+
+   const rows=md().shifts.map(s=>({
+     employee_key:employeeKey,
+     shift_date:s.date,
+     start_time:s.start,
+     end_time:s.end,
+     break_minutes:Number(s.breakMinutes)||0,
+     note:s.note||null,
+     active:true
+   }));
+   if(rows.length){
+     const {error:insErr}=await sb.from('payroll_shifts').insert(rows);
+     if(insErr) throw insErr;
+   }
+ }
+
+ async function loadMonthSettingsFromCloud(){
+   const sb=await waitForSupabase();
+   const {data,error}=await sb.from('payroll_month_settings')
+     .select('*')
+     .eq('employee_key',employeeKey)
+     .eq('payroll_month',monthFirstDay($('month').value))
+     .maybeSingle();
+   if(error) throw error;
+   if(!data) return false;
+
+   md().pay={
+     base:Number(data.base_salary)||0,
+     attendance:Number(data.attendance_bonus)||0,
+     jobAllowance:Number(data.job_allowance)||0,
+     otherAllowance:Number(data.other_allowance)||0,
+     bonus:Number(data.bonus)||0,
+     overtime:Number(data.overtime_pay)||0,
+     extraPay:Number(data.extra_pay)||0,
+     leaveDeduction:Number(data.leave_deduction)||0,
+     lateDeduction:Number(data.late_deduction)||0,
+     labor:Number(data.labor_insurance)||0,
+     health:Number(data.health_insurance)||0,
+     otherDeduction:Number(data.other_deduction)||0
+   };
+   return true;
+ }
+
+ async function loadShiftsFromCloud(){
+   const sb=await waitForSupabase();
+   const month=$('month').value;
+   const start=month+'-01';
+   const [yy,mm]=month.split('-').map(Number);
+   const nd=new Date(yy,mm,1);
+   const end=`${nd.getFullYear()}-${pad(nd.getMonth()+1)}-01`;
+
+   const {data,error}=await sb.from('payroll_shifts')
+     .select('*')
+     .eq('employee_key',employeeKey)
+     .gte('shift_date',start)
+     .lt('shift_date',end)
+     .order('shift_date');
+   if(error) throw error;
+   if(!data || !data.length) return false;
+
+   md().shifts=data.map(s=>({
+     id:s.id,
+     cloudId:s.id,
+     date:s.shift_date,
+     start:(s.start_time||'').slice(0,5),
+     end:(s.end_time||'').slice(0,5),
+     breakMinutes:Number(s.break_minutes)||0,
+     note:s.note||'',
+     clockInDate:'',clockInTime:'',clockOutDate:'',clockOutTime:'',
+     autoIn:false,autoOut:false
+   }));
+   return true;
+ }
+
+ async function loadClockRecordsFromCloud(){
+   const sb=await waitForSupabase();
+   const month=$('month').value;
+   const start=month+'-01';
+   const [yy,mm]=month.split('-').map(Number);
+   const nd=new Date(yy,mm,1);
+   const end=`${nd.getFullYear()}-${pad(nd.getMonth()+1)}-01`;
+
+   const {data,error}=await sb.from('payroll_clock_records')
+     .select('shift_id,shift_date,clock_in_at,clock_out_at,clock_in_source,clock_out_source,manually_edited')
+     .eq('employee_key',employeeKey)
+     .gte('shift_date',start)
+     .lt('shift_date',end);
+   if(error) throw error;
+
+   const byShift=new Map((data||[]).map(r=>[r.shift_id,r]));
+   md().shifts.forEach(s=>{
+     const r=byShift.get(s.cloudId||s.id);
+     if(!r)return;
+     if(r.clock_in_at){
+       const d=new Date(r.clock_in_at);
+       s.clockInDate=ymd(d); s.clockInTime=hm(d);
+       s.autoIn=r.clock_in_source==='auto_schedule';
+     }
+     if(r.clock_out_at){
+       const d=new Date(r.clock_out_at);
+       s.clockOutDate=ymd(d); s.clockOutTime=hm(d);
+       s.autoOut=r.clock_out_source==='auto_schedule';
+     }
+   });
+ }
+
+ async function syncAllToCloud(showToast=true){
+   try{
+     setCloudStatus('同步中…');
+     await saveMonthSettingsToCloud();
+     await saveShiftsToCloud();
+     // Let database create/update clock records immediately too.
+     const sb=await waitForSupabase();
+     const {error}=await sb.rpc('payroll_auto_clock');
+     if(error) throw error;
+     await loadShiftsFromCloud();
+     await loadClockRecordsFromCloud();
+     persist(); loadPay(); render();
+     setCloudStatus('已同步到 Supabase',true);
+     if(showToast) toast('雲端同步完成');
+   }catch(err){
+     console.error(err);
+     setCloudStatus('同步失敗：'+(err.message||err));
+     if(showToast) toast('雲端同步失敗');
+   }
+ }
+
+ async function reloadFromCloud(showToast=true){
+   try{
+     setCloudStatus('讀取雲端資料中…');
+     const gotPay=await loadMonthSettingsFromCloud();
+     const gotShifts=await loadShiftsFromCloud();
+     if(gotShifts) await loadClockRecordsFromCloud();
+     persist(); loadPay(); render();
+     if(!$('monthSchedule').classList.contains('hidden')) buildMonthSchedule();
+     setCloudStatus((gotPay||gotShifts)?'已讀取 Supabase 資料':'雲端尚無本月資料',true);
+     if(showToast) toast((gotPay||gotShifts)?'已讀取雲端資料':'本月雲端尚無資料');
+   }catch(err){
+     console.error(err);
+     setCloudStatus('讀取失敗：'+(err.message||err));
+     if(showToast) toast('讀取雲端失敗');
+   }
  }
 
  ensure(currentMonth);loadPay();render();
- qsa('.pay-input').forEach(i=>i.addEventListener('input',()=>{md().pay[i.dataset.pay]=n(i.value);persist();calc()}));
- $('month').addEventListener('change',()=>{ensure($('month').value);loadPay();render();if(!$('monthSchedule').classList.contains('hidden'))buildMonthSchedule()});
+ waitForSupabase()
+   .then(()=>reloadFromCloud(false))
+   .catch(err=>setCloudStatus('Supabase 連線失敗：'+err.message));
+ let cloudSaveTimer=null;
+ qsa('.pay-input').forEach(i=>i.addEventListener('input',()=>{
+   md().pay[i.dataset.pay]=n(i.value);persist();calc();
+   clearTimeout(cloudSaveTimer);
+   cloudSaveTimer=setTimeout(()=>saveMonthSettingsToCloud().then(()=>setCloudStatus('薪資設定已同步',true)).catch(err=>setCloudStatus('薪資同步失敗：'+err.message)),700);
+ }));
+ $('month').addEventListener('change',()=>{
+   ensure($('month').value);loadPay();render();
+   if(!$('monthSchedule').classList.contains('hidden'))buildMonthSchedule();
+   reloadFromCloud(false);
+ });
  if($('addShift'))$('addShift').addEventListener('click',()=>openEditor(null));if($('cancelShift'))$('cancelShift').addEventListener('click',()=>$('editor').classList.add('hidden'));
  $('saveShift').addEventListener('click',()=>{
    const d={date:$('shiftDate').value,start:$('startTime').value,end:$('endTime').value,breakMinutes:Math.min(720,n($('breakMinutes').value)),clockInDate:$('clockInDate').value,clockInTime:$('clockInTime').value,clockOutDate:$('clockOutDate').value,clockOutTime:$('clockOutTime').value,note:$('note').value.trim(),autoIn:false,autoOut:false};
@@ -300,7 +533,8 @@
    if(b.dataset.a==='out'){if(!s.clockInDate){s.clockInDate=ymd(t);s.clockInTime=hm(t);s.autoIn=false}s.clockOutDate=ymd(t);s.clockOutTime=hm(t);s.autoOut=false}
    if(b.dataset.a==='edit'){openEditor(s);return}
    if(b.dataset.a==='delete'){md().shifts=md().shifts.filter(x=>x.id!==s.id)}
-   render()
+   render();
+   syncAllToCloud(false);
  });
  $('refresh').addEventListener('click',()=>{render();toast('打卡狀態已更新')});
  $('copyPrev').addEventListener('click',()=>{
@@ -319,6 +553,10 @@
    [...$('monthScheduleBody').querySelectorAll('input[type="time"]')].forEach(i=>i.value='');
    $('monthScheduleMsg').textContent='已清空畫面，按「儲存整月班表」後才會正式儲存。';
  });
+
+
+ $('syncNow').addEventListener('click',()=>syncAllToCloud(true));
+ $('reloadCloud').addEventListener('click',()=>reloadFromCloud(true));
 
  $('exportData').addEventListener('click',()=>{
    const blob=new Blob([JSON.stringify({version:1,exportedAt:new Date().toISOString(),months:state.months},null,2)],{type:'application/json'});
@@ -379,5 +617,16 @@
   });
 })();
 </script>
+
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/+esm";
+
+const SUPABASE_URL = 'https://lmiazouyimwuwjoihizi.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_9k2wrNVmnstb2SWaRvazGw_L0lrtXNW';
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+window.__payrollSupabase = sb;
+window.dispatchEvent(new CustomEvent("payroll-supabase-ready"));
+</script>
+
 </body>
 </html>
