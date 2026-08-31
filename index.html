@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <title>月薪班表・自動打卡・薪資計算</title>
+  <style>
+    :root{
+      --bg:#f7f7f8;--card:#fff;--text:#111827;--muted:#6b7280;--border:#e5e7eb;
+      --accent:#111827;--accentText:#fff;--danger:#b91c1c;--ok:#047857
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif;background:var(--bg);color:var(--text)}
+    main{max-width:1100px;margin:auto;padding:16px}
+    h1{font-size:24px;margin:8px 0 4px}.sub{color:var(--muted);margin:0 0 18px}
+    .grid{display:grid;gap:12px}.summary{grid-template-columns:repeat(4,1fr)}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:16px}
+    .metric .label{font-size:13px;color:var(--muted)}.metric .value{font-size:26px;font-weight:700;margin-top:5px}
+    .section-title{font-size:18px;font-weight:700;margin:0 0 4px}.help{font-size:13px;color:var(--muted);margin:0}
+    .form-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px}
+    label{font-size:13px;font-weight:600;display:block}
+    input,select,button{font:inherit}
+    input,select{width:100%;margin-top:6px;padding:12px;border:1px solid var(--border);border-radius:12px;background:#fff;font-size:16px}
+    button{border:1px solid var(--border);background:#fff;border-radius:12px;padding:11px 14px;min-height:44px;cursor:pointer}
+    button.primary{background:var(--accent);color:var(--accentText);border-color:var(--accent)}
+    button.danger{color:var(--danger)}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:end}
+    .toolbar .grow{flex:1;min-width:180px}
+    .shift{margin-top:12px}.shift-head,.row{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}
+    .pill{border:1px solid var(--border);border-radius:999px;padding:6px 10px;font-size:13px}
+    .mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+    .mini-label{font-size:12px;color:var(--muted)}.mini-value{font-weight:700;margin-top:4px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    .empty{text-align:center;color:var(--muted);padding:26px;border:1px dashed var(--border);border-radius:18px;background:#fff}
+    .hidden{display:none!important}
+    .salary-lines{display:grid;gap:9px}.salary-line{display:flex;justify-content:space-between;gap:16px}
+    .salary-line.total{border-top:1px solid var(--border);padding-top:12px;font-size:18px;font-weight:700}
+    .notice{font-size:13px;color:var(--muted);line-height:1.6}
+    .notice strong{color:var(--text)}
+    #toast{position:sticky;bottom:12px;background:#111827;color:#fff;padding:10px 14px;border-radius:12px;margin-top:12px;display:none}
+    @media(max-width:800px){.summary,.form-grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:520px){main{padding:12px}.summary,.form-grid,.mini-grid{grid-template-columns:1fr}.metric .value{font-size:23px}}
+  </style>
+</head>
+<body>
+<main>
+  <h1>月薪班表・自動打卡・薪資計算</h1>
+  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。</p>
+
+  <section class="grid summary">
+    <div class="card metric"><div class="label">本月底薪</div><div id="sumBase" class="value">NT$ 0</div></div>
+    <div class="card metric"><div class="label">排班天數</div><div id="sumDays" class="value">0 天</div></div>
+    <div class="card metric"><div class="label">實際工時</div><div id="sumHours" class="value">0 小時</div></div>
+    <div class="card metric"><div class="label">預估實領</div><div id="sumNet" class="value">NT$ 0</div></div>
+  </section>
+
+  <section class="card" style="margin-top:12px">
+    <div class="toolbar">
+      <label class="grow">薪資月份<input id="month" type="month"></label>
+      <button id="copyPrev">複製上月薪資設定</button>
+      <button id="refresh">更新打卡狀態</button>
+      <button id="exportData">匯出備份</button>
+      <label style="display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:12px;padding:8px 12px;min-height:44px">匯入備份<input id="importFile" type="file" accept="application/json" style="display:none"></label>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px">
+    <h2 class="section-title">薪資設定</h2>
+    <p class="help">全部都可以修改，每個月份互不影響。</p>
+    <div class="form-grid">
+      <label>底薪<input data-pay="base" type="number" min="0" inputmode="numeric"></label>
+      <label>全勤獎金<input data-pay="attendance" type="number" min="0" inputmode="numeric"></label>
+      <label>職務津貼<input data-pay="jobAllowance" type="number" min="0" inputmode="numeric"></label>
+      <label>其他津貼<input data-pay="otherAllowance" type="number" min="0" inputmode="numeric"></label>
+      <label>獎金<input data-pay="bonus" type="number" min="0" inputmode="numeric"></label>
+      <label>加班費<input data-pay="overtime" type="number" min="0" inputmode="numeric"></label>
+      <label>其他加給<input data-pay="extraPay" type="number" min="0" inputmode="numeric"></label>
+      <label>請假扣款<input data-pay="leaveDeduction" type="number" min="0" inputmode="numeric"></label>
+      <label>遲到／早退扣款<input data-pay="lateDeduction" type="number" min="0" inputmode="numeric"></label>
+      <label>勞保<input data-pay="labor" type="number" min="0" inputmode="numeric"></label>
+      <label>健保<input data-pay="health" type="number" min="0" inputmode="numeric"></label>
+      <label>其他扣款<input data-pay="otherDeduction" type="number" min="0" inputmode="numeric"></label>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px">
+    <div class="row">
+      <div><h2 class="section-title">本月班表</h2><p class="help">先輸入每月上班日期與時間。</p></div>
+      <button id="addShift" class="primary">＋ 新增班表</button>
+    </div>
+  </section>
+
+  <section id="editor" class="card hidden" style="margin-top:12px">
+    <h2 id="editorTitle" class="section-title">新增班表</h2>
+    <div class="form-grid">
+      <label>上班日期<input id="shiftDate" type="date"></label>
+      <label>預定上班<input id="startTime" type="time" value="15:00"></label>
+      <label>預定下班<input id="endTime" type="time" value="23:00"></label>
+      <label>休息分鐘<input id="breakMinutes" type="number" min="0" max="720" value="0" inputmode="numeric"></label>
+      <label>實際簽到日期<input id="clockInDate" type="date"></label>
+      <label>實際簽到時間<input id="clockInTime" type="time"></label>
+      <label>實際簽退日期<input id="clockOutDate" type="date"></label>
+      <label>實際簽退時間<input id="clockOutTime" type="time"></label>
+      <label style="grid-column:1/-1">備註<input id="note" type="text" placeholder="例如：臨時加班、換班、補登"></label>
+    </div>
+    <div class="actions" style="margin-top:14px">
+      <button id="saveShift" class="primary">儲存班表</button>
+      <button id="cancelShift">取消</button>
+    </div>
+    <p id="editorMsg" class="help" style="margin-top:8px"></p>
+  </section>
+
+  <section style="margin-top:12px">
+    <div id="empty" class="empty">這個月份還沒有班表。</div>
+    <div id="shiftList"></div>
+  </section>
+
+  <section class="card" style="margin-top:12px">
+    <h2 class="section-title">本月薪資明細</h2>
+    <div class="salary-lines" style="margin-top:12px">
+      <div class="salary-line"><span>底薪</span><strong id="dBase">NT$ 0</strong></div>
+      <div class="salary-line"><span>加給合計</span><strong id="dAdds">NT$ 0</strong></div>
+      <div class="salary-line"><span>扣款合計</span><strong id="dDeduct">− NT$ 0</strong></div>
+      <div class="salary-line total"><span>預估實領</span><strong id="dNet">NT$ 0</strong></div>
+    </div>
+  </section>
+
+  <section class="card notice" style="margin-top:12px">
+    <strong>自動打卡說明：</strong>目前這個獨立前端版會在網頁開啟時、回到頁面時、或按「更新打卡狀態」時，依班表時間自動補上預定簽到／簽退。若要做到手機完全沒開網頁也能在指定時間真正自動寫入，需要下一階段接後端資料庫與排程服務。
+  </section>
+  <div id="toast"></div>
+</main>
+
+<script>
+(()=>{
+ const STORAGE='yj-payroll-v1';
+ const $=id=>document.getElementById(id), qsa=s=>[...document.querySelectorAll(s)];
+ const pad=n=>String(n).padStart(2,'0'), money=n=>'NT$ '+Math.round(Number(n)||0).toLocaleString('zh-TW');
+ const defaultPay={base:30000,attendance:0,jobAllowance:0,otherAllowance:0,bonus:0,overtime:0,extraPay:0,leaveDeduction:0,lateDeduction:0,labor:0,health:0,otherDeduction:0};
+ let state={months:{},editingId:null};
+ try{const raw=localStorage.getItem(STORAGE);if(raw)state={...state,...JSON.parse(raw)}}catch(e){}
+ const now=new Date(), currentMonth=`${now.getFullYear()}-${pad(now.getMonth()+1)}`; $('month').value=currentMonth;
+ const n=v=>{const x=Number(v);return Number.isFinite(x)?Math.max(0,x):0};
+ const persist=()=>localStorage.setItem(STORAGE,JSON.stringify({months:state.months}));
+ const ensure=m=>state.months[m]||(state.months[m]={pay:{...defaultPay},shifts:[]});
+ const md=()=>ensure($('month').value);
+ const ymd=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`, hm=d=>`${pad(d.getHours())}:${pad(d.getMinutes())}`;
+ function dt(date,time){if(!date||!time)return null;const [y,m,d]=date.split('-').map(Number),[h,mi]=time.split(':').map(Number);return new Date(y,m-1,d,h,mi,0,0)}
+ function sched(s){const a=dt(s.date,s.start);let b=dt(s.date,s.end);if(b<=a){b=new Date(b);b.setDate(b.getDate()+1)}return{a,b}}
+ function autoApply(s){
+   const {a,b}=sched(s), t=new Date();
+   if(!s.clockInDate&&t>=a){s.clockInDate=ymd(a);s.clockInTime=hm(a);s.autoIn=true}
+   if(!s.clockOutDate&&t>=b){s.clockOutDate=ymd(b);s.clockOutTime=hm(b);s.autoOut=true}
+ }
+ function effective(s){autoApply(s);return{cin:dt(s.clockInDate,s.clockInTime),cout:dt(s.clockOutDate,s.clockOutTime)}}
+ function hours(s){const e=effective(s);if(!e.cin||!e.cout||e.cout<=e.cin)return 0;return Math.max(0,(e.cout-e.cin)/3600000-n(s.breakMinutes)/60)}
+ function status(s){const {a}=sched(s),t=new Date(),e=effective(s);if(e.cout)return s.autoOut?'已自動簽退':'已簽退';if(e.cin)return s.autoIn?'已自動簽到':'上班中';return t<a?'未到上班時間':'待簽到'}
+ function toast(msg){$('toast').textContent=msg;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',1800)}
+ function loadPay(){const p=md().pay;qsa('.pay-input').forEach(i=>i.value=p[i.dataset.pay]??0)}
+ function calc(){
+   const d=md(),p=d.pay;
+   const adds=p.attendance+p.jobAllowance+p.otherAllowance+p.bonus+p.overtime+p.extraPay;
+   const ded=p.leaveDeduction+p.lateDeduction+p.labor+p.health+p.otherDeduction;
+   const net=Math.max(0,p.base+adds-ded), hrs=d.shifts.reduce((a,s)=>a+hours(s),0);
+   $('sumBase').textContent=money(p.base);$('sumDays').textContent=d.shifts.length+' 天';$('sumHours').textContent=hrs.toFixed(2)+' 小時';$('sumNet').textContent=money(net);
+   $('dBase').textContent=money(p.base);$('dAdds').textContent=money(adds);$('dDeduct').textContent='− '+money(ded);$('dNet').textContent=money(net);
+ }
+ function render(){
+   const rows=[...md().shifts].sort((a,b)=>a.date.localeCompare(b.date)||a.start.localeCompare(b.start)); $('empty').classList.toggle('hidden',rows.length>0);$('shiftList').innerHTML='';
+   rows.forEach(s=>{
+     const e=effective(s), el=document.createElement('article');el.className='card shift';
+     const safe=(s.note||'').replace(/[<>]/g,'');
+     el.innerHTML=`<div class="shift-head"><div><strong>${s.date}</strong><div class="help" style="margin-top:4px">預定 ${s.start}–${s.end} ・ 休息 ${s.breakMinutes||0} 分鐘</div></div><span class="pill">${status(s)}</span></div>
+     <div class="mini-grid"><div><div class="mini-label">簽到</div><div class="mini-value">${e.cin?ymd(e.cin)+' '+hm(e.cin):'—'}</div></div><div><div class="mini-label">簽退</div><div class="mini-value">${e.cout?ymd(e.cout)+' '+hm(e.cout):'—'}</div></div><div><div class="mini-label">工時</div><div class="mini-value">${hours(s).toFixed(2)} 小時</div></div></div>
+     ${safe?`<div class="help">備註：${safe}</div>`:''}
+     <div class="actions" style="margin-top:12px"><button data-a="in" data-id="${s.id}">現在簽到</button><button data-a="out" data-id="${s.id}">現在簽退</button><button data-a="edit" data-id="${s.id}">修改</button><button data-a="delete" data-id="${s.id}" class="danger">刪除</button></div>`;
+     $('shiftList').appendChild(el)
+   });
+   persist();calc()
+ }
+ function openEditor(s){
+   state.editingId=s?s.id:null;$('editor').classList.remove('hidden');$('editorTitle').textContent=s?'修改班表／打卡資料':'新增班表';$('editorMsg').textContent='';
+   $('shiftDate').value=s?s.date:$('month').value+'-01';$('startTime').value=s?s.start:'15:00';$('endTime').value=s?s.end:'23:00';$('breakMinutes').value=s?s.breakMinutes||0:0;
+   $('clockInDate').value=s?s.clockInDate||'':'';$('clockInTime').value=s?s.clockInTime||'':'';$('clockOutDate').value=s?s.clockOutDate||'':'';$('clockOutTime').value=s?s.clockOutTime||'':'';$('note').value=s?s.note||'':''
+ }
+ ensure(currentMonth);loadPay();render();
+ qsa('.pay-input').forEach(i=>i.addEventListener('input',()=>{md().pay[i.dataset.pay]=n(i.value);persist();calc()}));
+ $('month').addEventListener('change',()=>{ensure($('month').value);loadPay();render()});
+ $('addShift').addEventListener('click',()=>openEditor(null));$('cancelShift').addEventListener('click',()=>$('editor').classList.add('hidden'));
+ $('saveShift').addEventListener('click',()=>{
+   const d={date:$('shiftDate').value,start:$('startTime').value,end:$('endTime').value,breakMinutes:Math.min(720,n($('breakMinutes').value)),clockInDate:$('clockInDate').value,clockInTime:$('clockInTime').value,clockOutDate:$('clockOutDate').value,clockOutTime:$('clockOutTime').value,note:$('note').value.trim(),autoIn:false,autoOut:false};
+   if(!d.date||!d.start||!d.end){$('editorMsg').textContent='請完整填寫日期、上班時間與下班時間。';return}
+   if(!d.date.startsWith($('month').value)){$('editorMsg').textContent='上班日期需在目前選取月份。';return}
+   if((d.clockInDate&&!d.clockInTime)||(!d.clockInDate&&d.clockInTime)||(d.clockOutDate&&!d.clockOutTime)||(!d.clockOutDate&&d.clockOutTime)){$('editorMsg').textContent='手動打卡時，日期和時間要一起填。';return}
+   const arr=md().shifts;if(state.editingId)Object.assign(arr.find(x=>x.id===state.editingId),d);else arr.push({id:crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random()),...d});
+   $('editor').classList.add('hidden');render();toast('班表已儲存')
+ });
+ $('shiftList').addEventListener('click',e=>{
+   const b=e.target.closest('button[data-a]');if(!b)return;const s=md().shifts.find(x=>x.id===b.dataset.id);if(!s)return;const t=new Date();
+   if(b.dataset.a==='in'){s.clockInDate=ymd(t);s.clockInTime=hm(t);s.autoIn=false}
+   if(b.dataset.a==='out'){if(!s.clockInDate){s.clockInDate=ymd(t);s.clockInTime=hm(t);s.autoIn=false}s.clockOutDate=ymd(t);s.clockOutTime=hm(t);s.autoOut=false}
+   if(b.dataset.a==='edit'){openEditor(s);return}
+   if(b.dataset.a==='delete'){md().shifts=md().shifts.filter(x=>x.id!==s.id)}
+   render()
+ });
+ $('refresh').addEventListener('click',()=>{render();toast('打卡狀態已更新')});
+ $('copyPrev').addEventListener('click',()=>{
+   const [y,m]=$('month').value.split('-').map(Number),pdt=new Date(y,m-2,1),prev=`${pdt.getFullYear()}-${pad(pdt.getMonth()+1)}`;
+   if(!state.months[prev]){toast('上個月沒有設定可複製');return}
+   md().pay={...state.months[prev].pay};loadPay();persist();calc();toast('已複製上月薪資設定')
+ });
+ $('exportData').addEventListener('click',()=>{
+   const blob=new Blob([JSON.stringify({version:1,exportedAt:new Date().toISOString(),months:state.months},null,2)],{type:'application/json'});
+   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`薪資班表備份-${$('month').value}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)
+ });
+ $('importFile').addEventListener('change',async e=>{
+   const f=e.target.files?.[0];if(!f)return;
+   try{const obj=JSON.parse(await f.text());if(!obj.months||typeof obj.months!=='object')throw new Error();state.months=obj.months;ensure($('month').value);loadPay();render();toast('備份已匯入')}catch(err){toast('備份格式不正確')}finally{e.target.value=''}
+ });
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)render()});
+ setInterval(()=>{if(!document.hidden)render()},60000);
+})();
+</script>
+</body>
+</html>
