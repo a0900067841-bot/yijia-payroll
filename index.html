@@ -89,7 +89,7 @@
 
   <section class="card" style="margin-top:12px">
     <h2 class="section-title">薪資設定</h2>
-    <p class="help">全部都可以修改，每個月份互不影響。</p>
+    <p class="help">全部都可以修改，每個月份互不影響。加班時數會獨立記錄，不會覆蓋正常班簽退。</p>
     <div class="form-grid">
       <label>底薪<input data-pay="base" type="number" min="0" inputmode="numeric"></label>
       <label>全勤獎金<input data-pay="attendance" type="number" min="0" inputmode="numeric"></label>
@@ -227,10 +227,19 @@
      el.innerHTML=`<div class="shift-head"><div><strong>${s.date}</strong><div class="help" style="margin-top:4px">預定 ${s.start}–${s.end} ・ 休息 ${s.breakMinutes||0} 分鐘</div></div><span class="pill">${status(s)}</span></div>
      <div class="mini-grid"><div><div class="mini-label">簽到</div><div class="mini-value">${e.cin?ymd(e.cin)+' '+hm(e.cin):'—'}</div></div><div><div class="mini-label">簽退</div><div class="mini-value">${e.cout?ymd(e.cout)+' '+hm(e.cout):'—'}</div></div><div><div class="mini-label">工時</div><div class="mini-value">${hours(s).toFixed(2)} 小時</div></div></div>
      ${safe?`<div class="help">備註：${safe}</div>`:''}
-     <div class="actions" style="margin-top:12px"><button data-a="in" data-id="${s.id}">現在簽到</button><button data-a="out" data-id="${s.id}">現在簽退</button><button data-a="edit" data-id="${s.id}">修改</button><button data-a="delete" data-id="${s.id}" class="danger">刪除</button></div>`;
+     <div class="actions" style="margin-top:12px">
+       <button data-a="in" data-id="${s.id}">現在簽到</button>
+       <button data-a="out" data-id="${s.id}">現在簽退</button>
+       <button data-a="ot-start" data-id="${s.id}">開始加班</button>
+       <button data-a="ot-end" data-id="${s.id}">結束加班</button>
+       <button data-a="edit" data-id="${s.id}">修改</button>
+       <button data-a="delete" data-id="${s.id}" class="danger">刪除</button>
+     </div>
+     <div class="help overtime-status" data-ot-status="${s.id}" style="margin-top:10px">加班：讀取中…</div>`;
      $('shiftList').appendChild(el)
    });
-   persist();calc()
+   persist();calc();
+   if(window.__payrollSupabase) refreshOvertimeStatuses();
  }
  function openEditor(s){
    state.editingId=s?s.id:null;$('editor').classList.remove('hidden');$('editorTitle').textContent=s?'修改班表／打卡資料':'新增班表';$('editorMsg').textContent='';
@@ -503,6 +512,100 @@
    }
  }
 
+
+ async function getOvertimeRecord(shiftId){
+   const sb=await waitForSupabase();
+   const {data,error}=await sb.from('payroll_overtime_records')
+     .select('*')
+     .eq('shift_id',shiftId)
+     .order('created_at',{ascending:false})
+     .limit(1)
+     .maybeSingle();
+   if(error) throw error;
+   return data||null;
+ }
+
+ async function refreshOvertimeStatuses(){
+   try{
+     const sb=await waitForSupabase();
+     const ids=md().shifts.map(s=>s.cloudId||s.id).filter(Boolean);
+     if(!ids.length)return;
+     const {data,error}=await sb.from('payroll_overtime_records')
+       .select('shift_id,overtime_start_at,overtime_end_at')
+       .in('shift_id',ids);
+     if(error) throw error;
+     const byShift=new Map((data||[]).map(r=>[r.shift_id,r]));
+     md().shifts.forEach(s=>{
+       const el=document.querySelector(`[data-ot-status="${s.id}"]`);
+       if(!el)return;
+       const r=byShift.get(s.cloudId||s.id);
+       if(!r){ el.textContent='加班：無'; return; }
+       const st=r.overtime_start_at?new Date(r.overtime_start_at):null;
+       const en=r.overtime_end_at?new Date(r.overtime_end_at):null;
+       if(st && !en){
+         el.textContent=`加班中：${ymd(st)} ${hm(st)} 起`;
+       }else if(st && en){
+         const hrs=Math.max(0,(en-st)/3600000);
+         el.textContent=`加班：${ymd(st)} ${hm(st)} → ${ymd(en)} ${hm(en)}（${hrs.toFixed(2)} 小時）`;
+       }else{
+         el.textContent='加班：無';
+       }
+     });
+   }catch(err){ console.error(err); }
+ }
+
+ async function startOvertime(s){
+   try{
+     const sb=await waitForSupabase();
+     const shiftId=s.cloudId||s.id;
+     if(!shiftId){ toast('請先同步班表到雲端'); return; }
+     const existing=await getOvertimeRecord(shiftId);
+     if(existing && existing.overtime_start_at && !existing.overtime_end_at){
+       toast('這筆已經在加班中'); return;
+     }
+     if(existing && existing.overtime_end_at){
+       toast('這筆加班已經結束'); return;
+     }
+     const {error}=await sb.from('payroll_overtime_records').insert({
+       employee_key:employeeKey,
+       shift_id:shiftId,
+       shift_date:s.date,
+       overtime_start_at:new Date().toISOString(),
+       source:'manual_button'
+     });
+     if(error) throw error;
+     toast('已開始加班');
+     await refreshOvertimeStatuses();
+   }catch(err){
+     console.error(err);
+     toast('開始加班失敗');
+   }
+ }
+
+ async function endOvertime(s){
+   try{
+     const sb=await waitForSupabase();
+     const shiftId=s.cloudId||s.id;
+     if(!shiftId){ toast('請先同步班表到雲端'); return; }
+     const existing=await getOvertimeRecord(shiftId);
+     if(!existing || !existing.overtime_start_at){
+       toast('尚未開始加班'); return;
+     }
+     if(existing.overtime_end_at){
+       toast('這筆加班已經結束'); return;
+     }
+     const {error}=await sb.from('payroll_overtime_records')
+       .update({overtime_end_at:new Date().toISOString()})
+       .eq('id',existing.id);
+     if(error) throw error;
+     toast('已結束加班');
+     await refreshOvertimeStatuses();
+   }catch(err){
+     console.error(err);
+     toast('結束加班失敗');
+   }
+ }
+
  ensure(currentMonth);loadPay();render();
  waitForSupabase()
    .then(()=>reloadFromCloud(false))
@@ -531,6 +634,8 @@
    const b=e.target.closest('button[data-a]');if(!b)return;const s=md().shifts.find(x=>x.id===b.dataset.id);if(!s)return;const t=new Date();
    if(b.dataset.a==='in'){s.clockInDate=ymd(t);s.clockInTime=hm(t);s.autoIn=false}
    if(b.dataset.a==='out'){if(!s.clockInDate){s.clockInDate=ymd(t);s.clockInTime=hm(t);s.autoIn=false}s.clockOutDate=ymd(t);s.clockOutTime=hm(t);s.autoOut=false}
+   if(b.dataset.a==='ot-start'){startOvertime(s);return}
+   if(b.dataset.a==='ot-end'){endOvertime(s);return}
    if(b.dataset.a==='edit'){openEditor(s);return}
    if(b.dataset.a==='delete'){md().shifts=md().shifts.filter(x=>x.id!==s.id)}
    render();
