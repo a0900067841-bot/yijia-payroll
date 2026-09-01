@@ -104,6 +104,10 @@
       <label>健保<input data-pay="health" type="number" min="0" inputmode="numeric"></label>
       <label>其他扣款<input data-pay="otherDeduction" type="number" min="0" inputmode="numeric"></label>
     </div>
+    <div class="actions" style="margin-top:14px">
+      <button id="saveSalarySettings" class="primary">儲存薪資設定</button>
+    </div>
+    <p id="salarySaveMsg" class="help" style="margin-top:8px">修改後請按「儲存薪資設定」，之後重開網頁會從 Supabase 讀回。</p>
   </section>
 
   <section class="card" style="margin-top:12px">
@@ -501,7 +505,10 @@
      const gotPay=await loadMonthSettingsFromCloud();
      const gotShifts=await loadShiftsFromCloud();
      if(gotShifts) await loadClockRecordsFromCloud();
-     persist(); loadPay(); render();
+     persist();
+     loadPay();
+     render();
+     if(gotPay && $('salarySaveMsg')) $('salarySaveMsg').textContent='已從 Supabase 載入本月薪資設定。';
      if(!$('monthSchedule').classList.contains('hidden')) buildMonthSchedule();
      setCloudStatus((gotPay||gotShifts)?'已讀取 Supabase 資料':'雲端尚無本月資料',true);
      if(showToast) toast((gotPay||gotShifts)?'已讀取雲端資料':'本月雲端尚無資料');
@@ -607,9 +614,13 @@
  }
 
  ensure(currentMonth);loadPay();render();
+ setCloudStatus('正在讀取 Supabase…');
  waitForSupabase()
    .then(()=>reloadFromCloud(false))
-   .catch(err=>setCloudStatus('Supabase 連線失敗：'+err.message));
+   .catch(err=>{
+     setCloudStatus('Supabase 連線失敗：'+err.message);
+     if($('salarySaveMsg')) $('salarySaveMsg').textContent='目前使用本機資料；雲端讀取失敗。';
+   });
  let cloudSaveTimer=null;
  qsa('.pay-input').forEach(i=>i.addEventListener('input',()=>{
    md().pay[i.dataset.pay]=n(i.value);persist();calc();
@@ -659,6 +670,32 @@
    $('monthScheduleMsg').textContent='已清空畫面，按「儲存整月班表」後才會正式儲存。';
  });
 
+
+
+ $('saveSalarySettings').addEventListener('click',async()=>{
+   try{
+     qsa('.pay-input').forEach(i=>md().pay[i.dataset.pay]=n(i.value));
+     persist();
+     calc();
+
+     $('salarySaveMsg').textContent='儲存中…';
+     await saveMonthSettingsToCloud();
+
+     const ok=await loadMonthSettingsFromCloud();
+     if(!ok) throw new Error('儲存後讀不到資料');
+
+     persist();
+     loadPay();
+     calc();
+     $('salarySaveMsg').textContent='薪資設定已儲存到 Supabase。';
+     setCloudStatus('薪資設定已同步',true);
+     toast('薪資設定已儲存');
+   }catch(err){
+     console.error(err);
+     $('salarySaveMsg').textContent='儲存失敗：'+(err.message||err);
+     toast('薪資設定儲存失敗');
+   }
+ });
 
  $('syncNow').addEventListener('click',()=>syncAllToCloud(true));
  $('reloadCloud').addEventListener('click',()=>reloadFromCloud(true));
