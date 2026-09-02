@@ -55,7 +55,7 @@
 <body>
 <main>
   <h1>月薪班表・自動打卡・薪資計算</h1>
-  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。 v12</p>
+  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。 v13</p>
 
   <section class="grid summary">
     <div class="card metric"><div class="label">本月底薪</div><div id="sumBase" class="value">NT$ 0</div></div>
@@ -91,18 +91,18 @@
     <h2 class="section-title">薪資設定</h2>
     <p class="help">全部都可以修改，每個月份互不影響。請填完整後按「儲存薪資設定」，系統會一次把整份資料存到 Supabase。</p>
     <div class="form-grid">
-      <label>底薪<input data-pay="base" type="number" min="0" inputmode="numeric"></label>
-      <label>全勤獎金<input data-pay="attendance" type="number" min="0" inputmode="numeric"></label>
-      <label>職務津貼<input data-pay="jobAllowance" type="number" min="0" inputmode="numeric"></label>
-      <label>其他津貼<input data-pay="otherAllowance" type="number" min="0" inputmode="numeric"></label>
-      <label>獎金<input data-pay="bonus" type="number" min="0" inputmode="numeric"></label>
-      <label>加班費<input data-pay="overtime" type="number" min="0" inputmode="numeric"></label>
-      <label>其他加給<input data-pay="extraPay" type="number" min="0" inputmode="numeric"></label>
-      <label>請假扣款<input data-pay="leaveDeduction" type="number" min="0" inputmode="numeric"></label>
-      <label>遲到／早退扣款<input data-pay="lateDeduction" type="number" min="0" inputmode="numeric"></label>
-      <label>勞保<input data-pay="labor" type="number" min="0" inputmode="numeric"></label>
-      <label>健保<input data-pay="health" type="number" min="0" inputmode="numeric"></label>
-      <label>其他扣款<input data-pay="otherDeduction" type="number" min="0" inputmode="numeric"></label>
+      <label>底薪<input class="pay-input" data-pay="base" type="number" min="0" inputmode="numeric"></label>
+      <label>全勤獎金<input class="pay-input" data-pay="attendance" type="number" min="0" inputmode="numeric"></label>
+      <label>職務津貼<input class="pay-input" data-pay="jobAllowance" type="number" min="0" inputmode="numeric"></label>
+      <label>其他津貼<input class="pay-input" data-pay="otherAllowance" type="number" min="0" inputmode="numeric"></label>
+      <label>獎金<input class="pay-input" data-pay="bonus" type="number" min="0" inputmode="numeric"></label>
+      <label>加班費<input class="pay-input" data-pay="overtime" type="number" min="0" inputmode="numeric"></label>
+      <label>其他加給<input class="pay-input" data-pay="extraPay" type="number" min="0" inputmode="numeric"></label>
+      <label>請假扣款<input class="pay-input" data-pay="leaveDeduction" type="number" min="0" inputmode="numeric"></label>
+      <label>遲到／早退扣款<input class="pay-input" data-pay="lateDeduction" type="number" min="0" inputmode="numeric"></label>
+      <label>勞保<input class="pay-input" data-pay="labor" type="number" min="0" inputmode="numeric"></label>
+      <label>健保<input class="pay-input" data-pay="health" type="number" min="0" inputmode="numeric"></label>
+      <label>其他扣款<input class="pay-input" data-pay="otherDeduction" type="number" min="0" inputmode="numeric"></label>
     </div>
     <div class="actions" style="margin-top:14px">
       <button id="saveSalarySettings" class="primary">儲存薪資設定</button>
@@ -230,8 +230,10 @@
  function loadPay(){
    const p=md().pay;
    qsa('.pay-input').forEach(i=>{
-     const v=Number(p[i.dataset.pay]);
+     const key=i.dataset.pay;
+     const v=Number(p[key]);
      i.value=Number.isFinite(v)?String(v):'0';
+     i.setAttribute('value', i.value);
    });
  }
  function calc(){
