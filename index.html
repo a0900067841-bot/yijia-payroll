@@ -55,7 +55,7 @@
 <body>
 <main>
   <h1>月薪班表・自動打卡・薪資計算</h1>
-  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。 v11</p>
+  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。 v12</p>
 
   <section class="grid summary">
     <div class="card metric"><div class="label">本月底薪</div><div id="sumBase" class="value">NT$ 0</div></div>
@@ -89,7 +89,7 @@
 
   <section class="card" style="margin-top:12px">
     <h2 class="section-title">薪資設定</h2>
-    <p class="help">全部都可以修改，每個月份互不影響。加班時數會獨立記錄，不會覆蓋正常班簽退。</p>
+    <p class="help">全部都可以修改，每個月份互不影響。請填完整後按「儲存薪資設定」，系統會一次把整份資料存到 Supabase。</p>
     <div class="form-grid">
       <label>底薪<input data-pay="base" type="number" min="0" inputmode="numeric"></label>
       <label>全勤獎金<input data-pay="attendance" type="number" min="0" inputmode="numeric"></label>
@@ -108,7 +108,7 @@
       <button id="saveSalarySettings" class="primary">儲存薪資設定</button>
       <button id="reloadSalarySettings">重新載入薪資設定</button>
     </div>
-    <p id="salarySaveMsg" class="help" style="margin-top:8px">修改後請按「儲存薪資設定」，之後重開網頁會從 Supabase 讀回。</p>
+    <p id="salarySaveMsg" class="help" style="margin-top:8px">請填完整份薪資設定後按「儲存薪資設定」。儲存成功後，之後重開會整份從 Supabase 載入。</p>
   </section>
 
   <section class="card" style="margin-top:12px">
@@ -745,7 +745,7 @@
      if($('salarySaveMsg')){
        $('salarySaveMsg').textContent=found
          ? '已從 Supabase 載入本月薪資設定。'
-         : '本月尚未有雲端薪資設定；請輸入後按「儲存薪資設定」。';
+         : '本月雲端尚未有薪資設定；請把需要的欄位填完後按「儲存薪資設定」。';
      }
    })
    .catch(err=>{
@@ -757,17 +757,13 @@
  waitForSupabase()
    .then(()=>reloadFromCloud(false))
    .catch(err=>setCloudStatus('Supabase 連線失敗：'+err.message));
- let cloudSaveTimer=null;
  qsa('.pay-input').forEach(i=>i.addEventListener('input',()=>{
    md().pay[i.dataset.pay]=n(i.value);
    persist();
    calc();
-   clearTimeout(cloudSaveTimer);
-   cloudSaveTimer=setTimeout(()=>{
-     saveMonthSettingsREST()
-       .then(()=>setCloudStatus('薪資設定已同步',true))
-       .catch(err=>setCloudStatus('薪資同步失敗：'+err.message));
-   },900);
+   if($('salarySaveMsg')){
+     $('salarySaveMsg').textContent='薪資設定已修改，請按「儲存薪資設定」。';
+   }
  }));
  $('month').addEventListener('change',()=>{
    ensure($('month').value);
@@ -827,10 +823,13 @@
 
  $('reloadSalarySettings').addEventListener('click',async()=>{
    try{
-     $('salarySaveMsg').textContent='正在從 Supabase 讀取…';
+     $('salarySaveMsg').textContent='正在從 Supabase 讀取整份薪資設定…';
      const ok=await loadMonthSettingsREST();
      if(ok){
-       $('salarySaveMsg').textContent='已從 Supabase 載入本月薪資設定。';
+       persist();
+       loadPay();
+       calc();
+       $('salarySaveMsg').textContent='已從 Supabase 載入整份本月薪資設定。';
        setCloudStatus('薪資設定已載入',true);
        toast('薪資設定已載入');
      }else{
@@ -846,17 +845,27 @@
 
  $('saveSalarySettings').addEventListener('click',async()=>{
    try{
-     qsa('.pay-input').forEach(i=>md().pay[i.dataset.pay]=n(i.value));
+     // 先把畫面上所有欄位一次收集進當月資料
+     qsa('.pay-input').forEach(i=>{
+       md().pay[i.dataset.pay]=n(i.value);
+     });
      persist();
      calc();
 
-     $('salarySaveMsg').textContent='儲存中…';
+     $('salarySaveMsg').textContent='正在儲存整份薪資設定…';
+
+     // 整份一次寫入 Supabase
      await saveMonthSettingsREST();
 
+     // 再從 Supabase 讀回一次驗證
      const ok=await loadMonthSettingsREST();
-     if(!ok) throw new Error('儲存後讀不到資料');
+     if(!ok) throw new Error('儲存完成後讀不到本月資料');
 
-     $('salarySaveMsg').textContent='薪資設定已儲存到 Supabase。';
+     persist();
+     loadPay();
+     calc();
+
+     $('salarySaveMsg').textContent='整份薪資設定已儲存到 Supabase。';
      setCloudStatus('薪資設定已同步',true);
      toast('薪資設定已儲存');
    }catch(err){
