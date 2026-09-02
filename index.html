@@ -55,7 +55,7 @@
 <body>
 <main>
   <h1>月薪班表・自動打卡・薪資計算</h1>
-  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。</p>
+  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。 v11</p>
 
   <section class="grid summary">
     <div class="card metric"><div class="label">本月底薪</div><div id="sumBase" class="value">NT$ 0</div></div>
@@ -106,6 +106,7 @@
     </div>
     <div class="actions" style="margin-top:14px">
       <button id="saveSalarySettings" class="primary">儲存薪資設定</button>
+      <button id="reloadSalarySettings">重新載入薪資設定</button>
     </div>
     <p id="salarySaveMsg" class="help" style="margin-top:8px">修改後請按「儲存薪資設定」，之後重開網頁會從 Supabase 讀回。</p>
   </section>
@@ -359,7 +360,6 @@
  function restHeaders(extra={}){
    return {
      'apikey':REST_KEY,
-     'Authorization':'Bearer '+REST_KEY,
      'Content-Type':'application/json',
      ...extra
    };
@@ -389,7 +389,10 @@
      headers:restHeaders({'Prefer':'resolution=merge-duplicates,return=representation'}),
      body:JSON.stringify(row)
    });
-   if(!res.ok) throw new Error('薪資儲存失敗 HTTP '+res.status);
+   if(!res.ok){
+     const detail=await res.text().catch(()=> '');
+     throw new Error('薪資儲存失敗 HTTP '+res.status+(detail?'：'+detail.slice(0,120):''));
+   }
    return true;
  }
 
@@ -820,6 +823,26 @@
  });
 
 
+
+
+ $('reloadSalarySettings').addEventListener('click',async()=>{
+   try{
+     $('salarySaveMsg').textContent='正在從 Supabase 讀取…';
+     const ok=await loadMonthSettingsREST();
+     if(ok){
+       $('salarySaveMsg').textContent='已從 Supabase 載入本月薪資設定。';
+       setCloudStatus('薪資設定已載入',true);
+       toast('薪資設定已載入');
+     }else{
+       $('salarySaveMsg').textContent='本月 Supabase 尚無薪資設定。';
+       toast('本月沒有雲端薪資設定');
+     }
+   }catch(err){
+     console.error(err);
+     $('salarySaveMsg').textContent='讀取失敗：'+(err.message||err);
+     toast('薪資設定讀取失敗');
+   }
+ });
 
  $('saveSalarySettings').addEventListener('click',async()=>{
    try{
