@@ -148,8 +148,8 @@
     <p id="monthScheduleMsg" class="help" style="margin-top:8px"></p>
   </section>
 
-  <section id="editor" class="card hidden" style="display:none!important">
-    <h2 id="editorTitle" class="section-title">新增班表</h2>
+  <section id="editor" class="card hidden" style="margin-top:12px">
+    <h2 id="editorTitle" class="section-title">修改班表／打卡資料</h2>
     <div class="form-grid">
       <label>上班日期<input id="shiftDate" type="date"></label>
       <label>預定上班<input id="startTime" type="time" value="15:00"></label>
@@ -184,6 +184,7 @@
   </section>
 
   <section class="card notice" style="margin-top:12px">
+    <strong>加班紀錄：</strong>測試或誤按的加班紀錄，可直接在該日期按「刪除加班」清除，不會刪除原本班表或正常簽到／簽退。<br>
     <strong>自動打卡說明：</strong>目前這個獨立前端版會在網頁開啟時、回到頁面時、或按「更新打卡狀態」時，依班表時間自動補上預定簽到／簽退。若要做到手機完全沒開網頁也能在指定時間真正自動寫入，需要下一階段接後端資料庫與排程服務。
   </section>
   <div id="toast"></div>
@@ -200,7 +201,18 @@
  const now=new Date(), currentMonth=`${now.getFullYear()}-${pad(now.getMonth()+1)}`; $('month').value=currentMonth;
  const n=v=>{const x=Number(v);return Number.isFinite(x)?Math.max(0,x):0};
  const persist=()=>localStorage.setItem(STORAGE,JSON.stringify({months:state.months}));
- const ensure=m=>state.months[m]||(state.months[m]={pay:{...defaultPay},shifts:[]});
+ function ensure(m){
+   if(!state.months[m] || typeof state.months[m]!=='object'){
+     state.months[m]={pay:{...defaultPay},shifts:[]};
+   }
+   if(!state.months[m].pay || typeof state.months[m].pay!=='object'){
+     state.months[m].pay={...defaultPay};
+   }else{
+     state.months[m].pay={...defaultPay,...state.months[m].pay};
+   }
+   if(!Array.isArray(state.months[m].shifts)) state.months[m].shifts=[];
+   return state.months[m];
+ }
  const md=()=>ensure($('month').value);
  const ymd=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`, hm=d=>`${pad(d.getHours())}:${pad(d.getMinutes())}`;
  function dt(date,time){if(!date||!time)return null;const [y,m,d]=date.split('-').map(Number),[h,mi]=time.split(':').map(Number);return new Date(y,m-1,d,h,mi,0,0)}
@@ -214,7 +226,13 @@
  function hours(s){const e=effective(s);if(!e.cin||!e.cout||e.cout<=e.cin)return 0;return Math.max(0,(e.cout-e.cin)/3600000-n(s.breakMinutes)/60)}
  function status(s){const {a}=sched(s),t=new Date(),e=effective(s);if(e.cout)return s.autoOut?'已自動簽退':'已簽退';if(e.cin)return s.autoIn?'已自動簽到':'上班中';return t<a?'未到上班時間':'待簽到'}
  function toast(msg){$('toast').textContent=msg;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',1800)}
- function loadPay(){const p=md().pay;qsa('.pay-input').forEach(i=>i.value=p[i.dataset.pay]??0)}
+ function loadPay(){
+   const p=md().pay;
+   qsa('.pay-input').forEach(i=>{
+     const v=Number(p[i.dataset.pay]);
+     i.value=Number.isFinite(v)?String(v):'0';
+   });
+ }
  function calc(){
    const d=md(),p=d.pay;
    const adds=p.attendance+p.jobAllowance+p.otherAllowance+p.bonus+p.overtime+p.extraPay;
@@ -236,6 +254,7 @@
        <button data-a="out" data-id="${s.id}">現在簽退</button>
        <button data-a="ot-start" data-id="${s.id}">開始加班</button>
        <button data-a="ot-end" data-id="${s.id}">結束加班</button>
+       <button data-a="ot-delete" data-id="${s.id}" class="danger">刪除加班</button>
        <button data-a="edit" data-id="${s.id}">修改</button>
        <button data-a="delete" data-id="${s.id}" class="danger">刪除</button>
      </div>
@@ -332,6 +351,77 @@
  }
 
  function monthFirstDay(month){ return month+'-01'; }
+
+
+ const REST_URL='https://lmiazouyimwuwjoihizi.supabase.co';
+ const REST_KEY='sb_publishable_9k2wrNVmnstb2SWaRvazGw_L0lrtXNW';
+
+ function restHeaders(extra={}){
+   return {
+     'apikey':REST_KEY,
+     'Authorization':'Bearer '+REST_KEY,
+     'Content-Type':'application/json',
+     ...extra
+   };
+ }
+
+ async function saveMonthSettingsREST(){
+   const p=md().pay;
+   const row={
+     employee_key:employeeKey,
+     payroll_month:monthFirstDay($('month').value),
+     base_salary:Number(p.base)||0,
+     attendance_bonus:Number(p.attendance)||0,
+     job_allowance:Number(p.jobAllowance)||0,
+     other_allowance:Number(p.otherAllowance)||0,
+     bonus:Number(p.bonus)||0,
+     overtime_pay:Number(p.overtime)||0,
+     extra_pay:Number(p.extraPay)||0,
+     leave_deduction:Number(p.leaveDeduction)||0,
+     late_deduction:Number(p.lateDeduction)||0,
+     labor_insurance:Number(p.labor)||0,
+     health_insurance:Number(p.health)||0,
+     other_deduction:Number(p.otherDeduction)||0
+   };
+   const url=REST_URL+'/rest/v1/payroll_month_settings?on_conflict=employee_key,payroll_month';
+   const res=await fetch(url,{
+     method:'POST',
+     headers:restHeaders({'Prefer':'resolution=merge-duplicates,return=representation'}),
+     body:JSON.stringify(row)
+   });
+   if(!res.ok) throw new Error('薪資儲存失敗 HTTP '+res.status);
+   return true;
+ }
+
+ async function loadMonthSettingsREST(){
+   const month=encodeURIComponent(monthFirstDay($('month').value));
+   const url=REST_URL+'/rest/v1/payroll_month_settings?select=*&employee_key=eq.'+
+     encodeURIComponent(employeeKey)+'&payroll_month=eq.'+month+'&limit=1';
+   const res=await fetch(url,{headers:restHeaders()});
+   if(!res.ok) throw new Error('薪資讀取失敗 HTTP '+res.status);
+   const rows=await res.json();
+   const data=Array.isArray(rows)?rows[0]:null;
+   if(!data) return false;
+
+   md().pay={
+     base:Number(data.base_salary)||0,
+     attendance:Number(data.attendance_bonus)||0,
+     jobAllowance:Number(data.job_allowance)||0,
+     otherAllowance:Number(data.other_allowance)||0,
+     bonus:Number(data.bonus)||0,
+     overtime:Number(data.overtime_pay)||0,
+     extraPay:Number(data.extra_pay)||0,
+     leaveDeduction:Number(data.leave_deduction)||0,
+     lateDeduction:Number(data.late_deduction)||0,
+     labor:Number(data.labor_insurance)||0,
+     health:Number(data.health_insurance)||0,
+     otherDeduction:Number(data.other_deduction)||0
+   };
+   persist();
+   loadPay();
+   calc();
+   return true;
+ }
 
  async function saveMonthSettingsToCloud(){
    const sb=await waitForSupabase();
@@ -589,6 +679,34 @@
    }
  }
 
+
+ async function deleteOvertime(s){
+   try{
+     const sb=await waitForSupabase();
+     const shiftId=s.cloudId||s.id;
+     if(!shiftId){ toast('請先同步班表到雲端'); return; }
+
+     const existing=await getOvertimeRecord(shiftId);
+     if(!existing){
+       toast('這天沒有加班紀錄');
+       return;
+     }
+
+     if(!confirm('確定要刪除這筆加班紀錄嗎？')) return;
+
+     const {error}=await sb.from('payroll_overtime_records')
+       .delete()
+       .eq('id',existing.id);
+     if(error) throw error;
+
+     toast('加班紀錄已刪除');
+     await refreshOvertimeStatuses();
+   }catch(err){
+     console.error(err);
+     toast('刪除加班紀錄失敗');
+   }
+ }
+
  async function endOvertime(s){
    try{
      const sb=await waitForSupabase();
@@ -613,23 +731,53 @@
    }
  }
 
- ensure(currentMonth);loadPay();render();
+ ensure(currentMonth);
+ loadPay();
+ render();
  setCloudStatus('正在讀取 Supabase…');
+
+ // 薪資設定先用 REST 直接讀，避免 iPhone 主畫面模式載入 SDK 較慢時出現空白。
+ loadMonthSettingsREST()
+   .then(found=>{
+     if($('salarySaveMsg')){
+       $('salarySaveMsg').textContent=found
+         ? '已從 Supabase 載入本月薪資設定。'
+         : '本月尚未有雲端薪資設定；請輸入後按「儲存薪資設定」。';
+     }
+   })
+   .catch(err=>{
+     console.error(err);
+     if($('salarySaveMsg')) $('salarySaveMsg').textContent='薪資雲端讀取失敗，目前顯示本機資料。';
+   });
+
+ // 班表 / 打卡 / 加班仍使用 Supabase SDK。
  waitForSupabase()
    .then(()=>reloadFromCloud(false))
-   .catch(err=>{
-     setCloudStatus('Supabase 連線失敗：'+err.message);
-     if($('salarySaveMsg')) $('salarySaveMsg').textContent='目前使用本機資料；雲端讀取失敗。';
-   });
+   .catch(err=>setCloudStatus('Supabase 連線失敗：'+err.message));
  let cloudSaveTimer=null;
  qsa('.pay-input').forEach(i=>i.addEventListener('input',()=>{
-   md().pay[i.dataset.pay]=n(i.value);persist();calc();
+   md().pay[i.dataset.pay]=n(i.value);
+   persist();
+   calc();
    clearTimeout(cloudSaveTimer);
-   cloudSaveTimer=setTimeout(()=>saveMonthSettingsToCloud().then(()=>setCloudStatus('薪資設定已同步',true)).catch(err=>setCloudStatus('薪資同步失敗：'+err.message)),700);
+   cloudSaveTimer=setTimeout(()=>{
+     saveMonthSettingsREST()
+       .then(()=>setCloudStatus('薪資設定已同步',true))
+       .catch(err=>setCloudStatus('薪資同步失敗：'+err.message));
+   },900);
  }));
  $('month').addEventListener('change',()=>{
-   ensure($('month').value);loadPay();render();
+   ensure($('month').value);
+   loadPay();
+   render();
    if(!$('monthSchedule').classList.contains('hidden'))buildMonthSchedule();
+   loadMonthSettingsREST()
+     .then(found=>{
+       if($('salarySaveMsg')) $('salarySaveMsg').textContent=found
+         ? '已從 Supabase 載入本月薪資設定。'
+         : '本月尚未有雲端薪資設定。';
+     })
+     .catch(()=>{});
    reloadFromCloud(false);
  });
  if($('addShift'))$('addShift').addEventListener('click',()=>openEditor(null));if($('cancelShift'))$('cancelShift').addEventListener('click',()=>$('editor').classList.add('hidden'));
@@ -647,6 +795,7 @@
    if(b.dataset.a==='out'){if(!s.clockInDate){s.clockInDate=ymd(t);s.clockInTime=hm(t);s.autoIn=false}s.clockOutDate=ymd(t);s.clockOutTime=hm(t);s.autoOut=false}
    if(b.dataset.a==='ot-start'){startOvertime(s);return}
    if(b.dataset.a==='ot-end'){endOvertime(s);return}
+   if(b.dataset.a==='ot-delete'){deleteOvertime(s);return}
    if(b.dataset.a==='edit'){openEditor(s);return}
    if(b.dataset.a==='delete'){md().shifts=md().shifts.filter(x=>x.id!==s.id)}
    render();
@@ -679,14 +828,11 @@
      calc();
 
      $('salarySaveMsg').textContent='儲存中…';
-     await saveMonthSettingsToCloud();
+     await saveMonthSettingsREST();
 
-     const ok=await loadMonthSettingsFromCloud();
+     const ok=await loadMonthSettingsREST();
      if(!ok) throw new Error('儲存後讀不到資料');
 
-     persist();
-     loadPay();
-     calc();
      $('salarySaveMsg').textContent='薪資設定已儲存到 Supabase。';
      setCloudStatus('薪資設定已同步',true);
      toast('薪資設定已儲存');
