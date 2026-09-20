@@ -55,7 +55,7 @@
 <body>
 <main>
   <h1>月薪班表・自動打卡・薪資計算</h1>
-  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。 v13</p>
+  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。 v14</p>
 
   <section class="grid summary">
     <div class="card metric"><div class="label">本月底薪</div><div id="sumBase" class="value">NT$ 0</div></div>
@@ -96,7 +96,11 @@
       <label>職務津貼<input class="pay-input" data-pay="jobAllowance" type="number" min="0" inputmode="numeric"></label>
       <label>其他津貼<input class="pay-input" data-pay="otherAllowance" type="number" min="0" inputmode="numeric"></label>
       <label>獎金<input class="pay-input" data-pay="bonus" type="number" min="0" inputmode="numeric"></label>
-      <label>加班費<input class="pay-input" data-pay="overtime" type="number" min="0" inputmode="numeric"></label>
+      <label>平日前2小時<input class="pay-input" data-pay="weekdayOtFirst2" type="number" min="0" inputmode="numeric"></label>
+      <label>平日後2小時<input class="pay-input" data-pay="weekdayOtAfter2" type="number" min="0" inputmode="numeric"></label>
+      <label>例假日（含國定假日）<input class="pay-input" data-pay="holidayOt" type="number" min="0" inputmode="numeric"></label>
+      <label>休息日第1-2小時<input class="pay-input" data-pay="restDayOt1to2" type="number" min="0" inputmode="numeric"></label>
+      <label>休息日第3-8小時<input class="pay-input" data-pay="restDayOt3to8" type="number" min="0" inputmode="numeric"></label>
       <label>其他加給<input class="pay-input" data-pay="extraPay" type="number" min="0" inputmode="numeric"></label>
       <label>請假扣款<input class="pay-input" data-pay="leaveDeduction" type="number" min="0" inputmode="numeric"></label>
       <label>遲到／早退扣款<input class="pay-input" data-pay="lateDeduction" type="number" min="0" inputmode="numeric"></label>
@@ -196,7 +200,25 @@
  const STORAGE='yj-payroll-v1';
  const $=id=>document.getElementById(id), qsa=s=>[...document.querySelectorAll(s)];
  const pad=n=>String(n).padStart(2,'0'), money=n=>'NT$ '+Math.round(Number(n)||0).toLocaleString('zh-TW');
- const defaultPay={base:30000,attendance:0,jobAllowance:0,otherAllowance:0,bonus:0,overtime:0,extraPay:0,leaveDeduction:0,lateDeduction:0,labor:0,health:0,otherDeduction:0};
+ const defaultPay={
+   base:30000,
+   attendance:0,
+   jobAllowance:0,
+   otherAllowance:0,
+   bonus:0,
+   weekdayOtFirst2:0,
+   weekdayOtAfter2:0,
+   holidayOt:0,
+   restDayOt1to2:0,
+   restDayOt3to8:0,
+   overtime:0,
+   extraPay:0,
+   leaveDeduction:0,
+   lateDeduction:0,
+   labor:0,
+   health:0,
+   otherDeduction:0
+ };
  let state={months:{},editingId:null};
  try{const raw=localStorage.getItem(STORAGE);if(raw)state={...state,...JSON.parse(raw)}}catch(e){}
  const now=new Date(), currentMonth=`${now.getFullYear()}-${pad(now.getMonth()+1)}`; $('month').value=currentMonth;
@@ -238,7 +260,14 @@
  }
  function calc(){
    const d=md(),p=d.pay;
-   const adds=p.attendance+p.jobAllowance+p.otherAllowance+p.bonus+p.overtime+p.extraPay;
+   const overtimeTotal=
+     (Number(p.weekdayOtFirst2)||0)+
+     (Number(p.weekdayOtAfter2)||0)+
+     (Number(p.holidayOt)||0)+
+     (Number(p.restDayOt1to2)||0)+
+     (Number(p.restDayOt3to8)||0);
+   p.overtime=overtimeTotal;
+   const adds=p.attendance+p.jobAllowance+p.otherAllowance+p.bonus+overtimeTotal+p.extraPay;
    const ded=p.leaveDeduction+p.lateDeduction+p.labor+p.health+p.otherDeduction;
    const net=Math.max(0,p.base+adds-ded), hrs=d.shifts.reduce((a,s)=>a+hours(s),0);
    $('sumBase').textContent=money(p.base);$('sumDays').textContent=d.shifts.length+' 天';$('sumHours').textContent=hrs.toFixed(2)+' 小時';$('sumNet').textContent=money(net);
@@ -377,7 +406,17 @@
      job_allowance:Number(p.jobAllowance)||0,
      other_allowance:Number(p.otherAllowance)||0,
      bonus:Number(p.bonus)||0,
-     overtime_pay:Number(p.overtime)||0,
+     weekday_ot_first_2:Number(p.weekdayOtFirst2)||0,
+     weekday_ot_after_2:Number(p.weekdayOtAfter2)||0,
+     holiday_ot:Number(p.holidayOt)||0,
+     rest_day_ot_1_2:Number(p.restDayOt1to2)||0,
+     rest_day_ot_3_8:Number(p.restDayOt3to8)||0,
+     overtime_pay:
+       (Number(p.weekdayOtFirst2)||0)+
+       (Number(p.weekdayOtAfter2)||0)+
+       (Number(p.holidayOt)||0)+
+       (Number(p.restDayOt1to2)||0)+
+       (Number(p.restDayOt3to8)||0),
      extra_pay:Number(p.extraPay)||0,
      leave_deduction:Number(p.leaveDeduction)||0,
      late_deduction:Number(p.lateDeduction)||0,
@@ -414,6 +453,11 @@
      jobAllowance:Number(data.job_allowance)||0,
      otherAllowance:Number(data.other_allowance)||0,
      bonus:Number(data.bonus)||0,
+     weekdayOtFirst2:Number(data.weekday_ot_first_2)||0,
+     weekdayOtAfter2:Number(data.weekday_ot_after_2)||0,
+     holidayOt:Number(data.holiday_ot)||0,
+     restDayOt1to2:Number(data.rest_day_ot_1_2)||0,
+     restDayOt3to8:Number(data.rest_day_ot_3_8)||0,
      overtime:Number(data.overtime_pay)||0,
      extraPay:Number(data.extra_pay)||0,
      leaveDeduction:Number(data.leave_deduction)||0,
@@ -439,7 +483,17 @@
      job_allowance:p.jobAllowance||0,
      other_allowance:p.otherAllowance||0,
      bonus:p.bonus||0,
-     overtime_pay:p.overtime||0,
+     weekday_ot_first_2:p.weekdayOtFirst2||0,
+     weekday_ot_after_2:p.weekdayOtAfter2||0,
+     holiday_ot:p.holidayOt||0,
+     rest_day_ot_1_2:p.restDayOt1to2||0,
+     rest_day_ot_3_8:p.restDayOt3to8||0,
+     overtime_pay:
+       (Number(p.weekdayOtFirst2)||0)+
+       (Number(p.weekdayOtAfter2)||0)+
+       (Number(p.holidayOt)||0)+
+       (Number(p.restDayOt1to2)||0)+
+       (Number(p.restDayOt3to8)||0),
      extra_pay:p.extraPay||0,
      leave_deduction:p.leaveDeduction||0,
      late_deduction:p.lateDeduction||0,
@@ -499,6 +553,11 @@
      jobAllowance:Number(data.job_allowance)||0,
      otherAllowance:Number(data.other_allowance)||0,
      bonus:Number(data.bonus)||0,
+     weekdayOtFirst2:Number(data.weekday_ot_first_2)||0,
+     weekdayOtAfter2:Number(data.weekday_ot_after_2)||0,
+     holidayOt:Number(data.holiday_ot)||0,
+     restDayOt1to2:Number(data.rest_day_ot_1_2)||0,
+     restDayOt3to8:Number(data.rest_day_ot_3_8)||0,
      overtime:Number(data.overtime_pay)||0,
      extraPay:Number(data.extra_pay)||0,
      leaveDeduction:Number(data.leave_deduction)||0,
