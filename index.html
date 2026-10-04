@@ -55,7 +55,7 @@
 <body>
 <main>
   <h1>月薪班表・自動打卡・薪資計算</h1>
-  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。 v14</p>
+  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。 v15</p>
 
   <section class="grid summary">
     <div class="card metric"><div class="label">本月底薪</div><div id="sumBase" class="value">NT$ 0</div></div>
@@ -190,7 +190,7 @@
 
   <section class="card notice" style="margin-top:12px">
     <strong>加班紀錄：</strong>測試或誤按的加班紀錄，可直接在該日期按「刪除加班」清除，不會刪除原本班表或正常簽到／簽退。<br>
-    <strong>自動打卡說明：</strong>目前這個獨立前端版會在網頁開啟時、回到頁面時、或按「更新打卡狀態」時，依班表時間自動補上預定簽到／簽退。若要做到手機完全沒開網頁也能在指定時間真正自動寫入，需要下一階段接後端資料庫與排程服務。
+    <strong>自動打卡說明：</strong>目前已接 Supabase 排程；手機沒有開啟網頁時，仍會依雲端班表自動簽到／簽退。修改未來班表後，新的預定時間會同步到雲端。
   </section>
   <div id="toast"></div>
 </main>
@@ -506,6 +506,96 @@
    if(error) throw error;
  }
 
+ function shiftScheduleIso(s){
+   const start=new Date(`${s.date}T${s.start}:00+08:00`);
+   let end=new Date(`${s.date}T${s.end}:00+08:00`);
+   if(end<=start) end=new Date(end.getTime()+86400000);
+   return {start:start.toISOString(),end:end.toISOString()};
+ }
+
+ async function syncClockScheduleForShift(s,{clockChanged=false}={}){
+   const sb=await waitForSupabase();
+   const shiftId=s.cloudId||s.id;
+   if(!shiftId)return;
+
+   // Ensure the clock-record row exists.
+   const {error:rpcErr}=await sb.rpc('payroll_auto_clock');
+   if(rpcErr) throw rpcErr;
+
+   const {data:r,error:readErr}=await sb.from('payroll_clock_records')
+     .select('*')
+     .eq('shift_id',shiftId)
+     .maybeSingle();
+   if(readErr) throw readErr;
+   if(!r)return;
+
+   const sch=shiftScheduleIso(s);
+   const patch={
+     shift_date:s.date,
+     scheduled_start:sch.start,
+     scheduled_end:sch.end
+   };
+
+   if(clockChanged){
+     patch.clock_in_at=(s.clockInDate&&s.clockInTime)
+       ? new Date(`${s.clockInDate}T${s.clockInTime}:00+08:00`).toISOString()
+       : null;
+     patch.clock_out_at=(s.clockOutDate&&s.clockOutTime)
+       ? new Date(`${s.clockOutDate}T${s.clockOutTime}:00+08:00`).toISOString()
+       : null;
+     patch.clock_in_source=patch.clock_in_at?'manual_edit':null;
+     patch.clock_out_source=patch.clock_out_at?'manual_edit':null;
+     patch.manually_edited=true;
+   }else if(!r.manually_edited){
+     // If the old punches were created by schedule automation, move them only
+     // when they should already exist under the new schedule.
+     const now=Date.now();
+     if(r.clock_in_source==='auto_schedule'){
+       patch.clock_in_at=now>=new Date(sch.start).getTime()?sch.start:null;
+       patch.clock_in_source=patch.clock_in_at?'auto_schedule':null;
+     }
+     if(r.clock_out_source==='auto_schedule'){
+       patch.clock_out_at=now>=new Date(sch.end).getTime()?sch.end:null;
+       patch.clock_out_source=patch.clock_out_at?'auto_schedule':null;
+     }
+   }
+
+   const {error:updateErr}=await sb.from('payroll_clock_records')
+     .update(patch)
+     .eq('shift_id',shiftId);
+   if(updateErr) throw updateErr;
+ }
+
+ async function updateOneShiftToCloud(s,{clockChanged=false}={}){
+   const sb=await waitForSupabase();
+   const row={
+     employee_key:employeeKey,
+     shift_date:s.date,
+     start_time:s.start,
+     end_time:s.end,
+     break_minutes:Number(s.breakMinutes)||0,
+     note:s.note||null,
+     active:true
+   };
+
+   if(s.cloudId){
+     const {error}=await sb.from('payroll_shifts')
+       .update(row)
+       .eq('id',s.cloudId);
+     if(error) throw error;
+   }else{
+     const {data,error}=await sb.from('payroll_shifts')
+       .insert(row)
+       .select('id')
+       .single();
+     if(error) throw error;
+     s.id=data.id;
+     s.cloudId=data.id;
+   }
+
+   await syncClockScheduleForShift(s,{clockChanged});
+ }
+
  async function saveShiftsToCloud(){
    const sb=await waitForSupabase();
    const month=$('month').value;
@@ -514,26 +604,62 @@
    const nd=new Date(yy,mm,1);
    const end=`${nd.getFullYear()}-${pad(nd.getMonth()+1)}-01`;
 
-   // Delete this month's old cloud schedule then insert current month schedule.
-   const {error:delErr}=await sb.from('payroll_shifts')
-     .delete()
+   const {data:cloudRows,error:cloudErr}=await sb.from('payroll_shifts')
+     .select('id,shift_date')
      .eq('employee_key',employeeKey)
      .gte('shift_date',start)
      .lt('shift_date',end);
-   if(delErr) throw delErr;
+   if(cloudErr) throw cloudErr;
 
-   const rows=md().shifts.map(s=>({
-     employee_key:employeeKey,
-     shift_date:s.date,
-     start_time:s.start,
-     end_time:s.end,
-     break_minutes:Number(s.breakMinutes)||0,
-     note:s.note||null,
-     active:true
-   }));
-   if(rows.length){
-     const {error:insErr}=await sb.from('payroll_shifts').insert(rows);
-     if(insErr) throw insErr;
+   const kept=new Set();
+
+   for(const s of md().shifts){
+     if(s.cloudId){
+       const {error}=await sb.from('payroll_shifts')
+         .update({
+           shift_date:s.date,
+           start_time:s.start,
+           end_time:s.end,
+           break_minutes:Number(s.breakMinutes)||0,
+           note:s.note||null,
+           active:true
+         })
+         .eq('id',s.cloudId);
+       if(error) throw error;
+       kept.add(s.cloudId);
+       await syncClockScheduleForShift(s,{clockChanged:false});
+     }else{
+       const {data,error}=await sb.from('payroll_shifts')
+         .insert({
+           employee_key:employeeKey,
+           shift_date:s.date,
+           start_time:s.start,
+           end_time:s.end,
+           break_minutes:Number(s.breakMinutes)||0,
+           note:s.note||null,
+           active:true
+         })
+         .select('id')
+         .single();
+       if(error) throw error;
+       s.id=data.id;
+       s.cloudId=data.id;
+       kept.add(data.id);
+       await syncClockScheduleForShift(s,{clockChanged:false});
+     }
+   }
+
+   // Only delete removed future shifts. Past worked records stay intact.
+   const today=ymd(new Date());
+   const removed=(cloudRows||[])
+     .filter(r=>!kept.has(r.id) && r.shift_date>=today)
+     .map(r=>r.id);
+
+   if(removed.length){
+     const {error}=await sb.from('payroll_shifts')
+       .delete()
+       .in('id',removed);
+     if(error) throw error;
    }
  }
 
@@ -841,13 +967,47 @@
    reloadFromCloud(false);
  });
  if($('addShift'))$('addShift').addEventListener('click',()=>openEditor(null));if($('cancelShift'))$('cancelShift').addEventListener('click',()=>$('editor').classList.add('hidden'));
- $('saveShift').addEventListener('click',()=>{
+ $('saveShift').addEventListener('click',async()=>{
    const d={date:$('shiftDate').value,start:$('startTime').value,end:$('endTime').value,breakMinutes:Math.min(720,n($('breakMinutes').value)),clockInDate:$('clockInDate').value,clockInTime:$('clockInTime').value,clockOutDate:$('clockOutDate').value,clockOutTime:$('clockOutTime').value,note:$('note').value.trim(),autoIn:false,autoOut:false};
    if(!d.date||!d.start||!d.end){$('editorMsg').textContent='請完整填寫日期、上班時間與下班時間。';return}
    if(!d.date.startsWith($('month').value)){$('editorMsg').textContent='上班日期需在目前選取月份。';return}
    if((d.clockInDate&&!d.clockInTime)||(!d.clockInDate&&d.clockInTime)||(d.clockOutDate&&!d.clockOutTime)||(!d.clockOutDate&&d.clockOutTime)){$('editorMsg').textContent='手動打卡時，日期和時間要一起填。';return}
-   const arr=md().shifts;if(state.editingId)Object.assign(arr.find(x=>x.id===state.editingId),d);else arr.push({id:crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random()),...d});
-   $('editor').classList.add('hidden');render();toast('班表已儲存')
+
+   try{
+     $('editorMsg').textContent='正在儲存並同步…';
+     const arr=md().shifts;
+
+     if(state.editingId){
+       const s=arr.find(x=>x.id===state.editingId);
+       if(!s) throw new Error('找不到要修改的班表');
+
+       const original={...s};
+       const clockChanged=
+         (original.clockInDate||'')!==(d.clockInDate||'') ||
+         (original.clockInTime||'')!==(d.clockInTime||'') ||
+         (original.clockOutDate||'')!==(d.clockOutDate||'') ||
+         (original.clockOutTime||'')!==(d.clockOutTime||'');
+
+       Object.assign(s,d);
+       await updateOneShiftToCloud(s,{clockChanged});
+     }else{
+       const s={id:crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random()),...d};
+       arr.push(s);
+       await updateOneShiftToCloud(s,{clockChanged:false});
+     }
+
+     await loadShiftsFromCloud();
+     await loadClockRecordsFromCloud();
+     persist();
+     $('editor').classList.add('hidden');
+     render();
+     setCloudStatus('班表已同步到 Supabase',true);
+     toast('班表修改已儲存');
+   }catch(err){
+     console.error(err);
+     $('editorMsg').textContent='儲存失敗：'+(err.message||err);
+     toast('班表修改失敗');
+   }
  });
  $('shiftList').addEventListener('click',e=>{
    const b=e.target.closest('button[data-a]');if(!b)return;const s=md().shifts.find(x=>x.id===b.dataset.id);if(!s)return;const t=new Date();
