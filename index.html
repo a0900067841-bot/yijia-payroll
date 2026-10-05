@@ -55,7 +55,7 @@
 <body>
 <main>
   <h1>月薪班表・自動打卡・薪資計算</h1>
-  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。 v15</p>
+  <p class="sub">每月獨立保存底薪、津貼、扣款、班表與打卡紀錄。 v16</p>
 
   <section class="grid summary">
     <div class="card metric"><div class="label">本月底薪</div><div id="sumBase" class="value">NT$ 0</div></div>
@@ -119,7 +119,7 @@
     <div class="row">
       <div>
         <h2 class="section-title">整月班表</h2>
-        <p class="help">直接填每天的上班／下班時間；休假日留空即可。</p>
+        <p class="help">直接填每天的上班／下班時間；原本有班後來改休假，可清空該日時間或按「設為休假」。</p>
       </div>
       <button id="openMonthSchedule" class="primary">輸入整月班表</button>
     </div>
@@ -141,6 +141,7 @@
             <th>星期</th>
             <th>上班時間</th>
             <th>下班時間</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody id="monthScheduleBody"></tbody>
@@ -168,6 +169,7 @@
     </div>
     <div class="actions" style="margin-top:14px">
       <button id="saveShift" class="primary">儲存班表</button>
+      <button id="setDayOff" class="danger">設為休假／移除班表</button>
       <button id="cancelShift">取消</button>
     </div>
     <p id="editorMsg" class="help" style="margin-top:8px"></p>
@@ -299,7 +301,8 @@
  function openEditor(s){
    state.editingId=s?s.id:null;$('editor').classList.remove('hidden');$('editorTitle').textContent=s?'修改班表／打卡資料':'新增班表';$('editorMsg').textContent='';
    $('shiftDate').value=s?s.date:$('month').value+'-01';$('startTime').value=s?s.start:'15:00';$('endTime').value=s?s.end:'23:00';$('breakMinutes').value=s?s.breakMinutes||0:0;
-   $('clockInDate').value=s?s.clockInDate||'':'';$('clockInTime').value=s?s.clockInTime||'':'';$('clockOutDate').value=s?s.clockOutDate||'':'';$('clockOutTime').value=s?s.clockOutTime||'':'';$('note').value=s?s.note||'':''
+   $('clockInDate').value=s?s.clockInDate||'':'';$('clockInTime').value=s?s.clockInTime||'':'';$('clockOutDate').value=s?s.clockOutDate||'':'';$('clockOutTime').value=s?s.clockOutTime||'':'';$('note').value=s?s.note||'':'';
+   $('setDayOff').classList.toggle('hidden',!s);
  }
 
  function daysInMonth(month){
@@ -324,23 +327,41 @@
        <td><strong>${day}</strong></td>
        <td>週${weekdayName(date)}</td>
        <td><input class="ms-start" type="time" value="${s?.start||''}" aria-label="${date} 上班時間"></td>
-       <td><input class="ms-end" type="time" value="${s?.end||''}" aria-label="${date} 下班時間"></td>`;
+       <td><input class="ms-end" type="time" value="${s?.end||''}" aria-label="${date} 下班時間"></td>
+       <td><button type="button" class="ms-off">設為休假</button></td>`;
      body.appendChild(tr);
    }
-   $('monthScheduleMsg').textContent='休假日留空即可。跨日班例如 23:00 → 07:00 也可以直接輸入。';
+   body.querySelectorAll('.ms-off').forEach(btn=>{
+     btn.addEventListener('click',()=>{
+       const tr=btn.closest('tr');
+       tr.querySelector('.ms-start').value='';
+       tr.querySelector('.ms-end').value='';
+       $('monthScheduleMsg').textContent=`${tr.dataset.date} 已標記為休假，按「儲存整月班表」後才會正式移除。`;
+     });
+   });
+   $('monthScheduleMsg').textContent='休假日留空即可；原本有班後來改休假，也可以按「設為休假」清空。';
  }
- function saveWholeMonth(){
-   const month=$('month').value;
+ async function saveWholeMonth(){
    const current=md().shifts;
    const oldMap=new Map(current.map(s=>[s.date,s]));
    const next=[];
+   const removed=[];
+
    [...$('monthScheduleBody').querySelectorAll('tr')].forEach(tr=>{
      const date=tr.dataset.date;
      const start=tr.querySelector('.ms-start').value;
      const end=tr.querySelector('.ms-end').value;
-     if(!start && !end) return;
-     if(!start || !end) return;
      const old=oldMap.get(date);
+
+     if(!start && !end){
+       if(old) removed.push(old);
+       return;
+     }
+     if(!start || !end){
+       if(old) next.push(old);
+       return;
+     }
+
      if(old){
        next.push({...old,start,end});
      }else{
@@ -352,14 +373,41 @@
        });
      }
    });
-   md().shifts=next;
-   persist();
-   render();
-   $('monthScheduleMsg').textContent=`已儲存 ${next.length} 天班表。`;
-   toast('整月班表已儲存');
-   saveShiftsToCloud()
-     .then(async()=>{ const sb=await waitForSupabase(); await sb.rpc('payroll_auto_clock'); await loadShiftsFromCloud(); await loadClockRecordsFromCloud(); persist(); render(); setCloudStatus('班表已同步到 Supabase',true); })
-     .catch(err=>setCloudStatus('班表同步失敗：'+err.message));
+
+   try{
+     $('monthScheduleMsg').textContent='正在儲存班表變動…';
+     const sb=await waitForSupabase();
+
+     for(const s of removed){
+       if(s.cloudId){
+         const {error}=await sb.from('payroll_shifts').delete().eq('id',s.cloudId);
+         if(error) throw error;
+       }
+     }
+
+     md().shifts=next;
+     persist();
+     await saveShiftsToCloud();
+
+     const {error:rpcErr}=await sb.rpc('payroll_auto_clock');
+     if(rpcErr) throw rpcErr;
+
+     await loadShiftsFromCloud();
+     await loadClockRecordsFromCloud();
+     persist();
+     render();
+     buildMonthSchedule();
+
+     $('monthScheduleMsg').textContent=removed.length
+       ? `已儲存，${removed.length} 天已改為休假。`
+       : `已儲存 ${next.length} 天班表。`;
+     setCloudStatus('班表已同步到 Supabase',true);
+     toast(removed.length?'休假變動已儲存':'整月班表已儲存');
+   }catch(err){
+     console.error(err);
+     $('monthScheduleMsg').textContent='班表同步失敗：'+(err.message||err);
+     toast('班表儲存失敗');
+   }
  }
 
 
@@ -1009,6 +1057,33 @@
      toast('班表修改失敗');
    }
  });
+ $('setDayOff').addEventListener('click',async()=>{
+   if(!state.editingId)return;
+   const s=md().shifts.find(x=>x.id===state.editingId);
+   if(!s)return;
+   if(!confirm(`確定要把 ${s.date} 改成休假並移除這筆班表嗎？`))return;
+
+   try{
+     $('editorMsg').textContent='正在移除班表…';
+     if(s.cloudId){
+       const sb=await waitForSupabase();
+       const {error}=await sb.from('payroll_shifts').delete().eq('id',s.cloudId);
+       if(error) throw error;
+     }
+     md().shifts=md().shifts.filter(x=>x.id!==s.id);
+     persist();
+     $('editor').classList.add('hidden');
+     render();
+     if(!$('monthSchedule').classList.contains('hidden'))buildMonthSchedule();
+     setCloudStatus('休假變動已同步到 Supabase',true);
+     toast('已改為休假');
+   }catch(err){
+     console.error(err);
+     $('editorMsg').textContent='移除失敗：'+(err.message||err);
+     toast('改休假失敗');
+   }
+ });
+
  $('shiftList').addEventListener('click',e=>{
    const b=e.target.closest('button[data-a]');if(!b)return;const s=md().shifts.find(x=>x.id===b.dataset.id);if(!s)return;const t=new Date();
    if(b.dataset.a==='in'){s.clockInDate=ymd(t);s.clockInTime=hm(t);s.autoIn=false}
